@@ -38,6 +38,27 @@ wc -l $OUT/with_outlook.jsonl   # 2865 기대
 
 ### 2. pr05 생성 — **연도별 청크 + 재개**(gpt-4o, ~2,865일, 비용 큼)
 연도별로 나눠 각자 CSV로 저장(중단/재개 안전). 이미 있는 연도 CSV는 건너뜀.
+
+> **권장: 하이브리드(pr05b)로 비용 절반.** 동기 pr05는 가장 단순·확실하지만 sync 단가라 비싸다(~$104/gpt-4o). 품질 게이트를 그대로 유지하면서 비용을 절반 가까이 줄이려면 `pr05b_generate_macro_news_hybrid.py`를 쓴다 — 대상일 전체를 Batch API로 1차 생성(−50%)한 뒤, 검증 실패/배치 에러 일자만 pr05의 동기 retry-with-feedback 루프로 복구한다. 프롬프트·검증(_validate_batch_event_coverage)·후처리는 pr05와 100% 동일하므로 기사 품질은 같다. 배치/동기 모두 같은 모델·temperature를 쓴다. work-dir에 배치 ID/원본출력을 저장해 중단·재개 안전(완료된 배치를 다시 제출하지 않음). 폴링이 `--max-wait-sec`를 넘으면 상태만 저장하고 종료 → 재실행 시 폴링 재개.
+> ```bash
+> set -a; . ./.env; set +a
+> for Y in 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023; do
+>   CSV=$OUT/gen_${Y}.csv
+>   if [ -f "$CSV" ]; then echo "skip $Y (exists)"; continue; fi
+>   python3 scripts/processors/pr05b_generate_macro_news_hybrid.py \
+>     --input-jsonl $OUT/with_outlook.jsonl \
+>     --output-csv  $CSV \
+>     --fail-log-path $OUT/fail_${Y}.csv \
+>     --work-dir    $OUT/batch_${Y} \
+>     --model gpt-4o \
+>     --start-date ${Y}-01-01 --end-date ${Y}-12-31 \
+>     > $OUT/gen_${Y}.log 2>&1
+>   echo "done $Y rc=$?"
+> done
+> ```
+> 연도별로 끊으면 배치 1건당 ~250요청이라 파일/큐 한도에 안전하고, 각 연도가 독립 재개된다. 배치는 별도 토큰 버킷이라 TPM 30k/분 제약을 받지 않는다(동기 폴백 구간만 순차 권장). gpt-5.5로 바꾸려면 `--model` 만 교체.
+
+아래는 **동기 전용(pr05)** 버전(가장 단순):
 ```bash
 set -a; . ./.env; set +a
 for Y in 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023; do
@@ -47,7 +68,7 @@ for Y in 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023; do
   python3 scripts/processors/pr05_generate_macro_news_from_llm.py \
     --input-jsonl $OUT/with_outlook.jsonl \
     --output-csv $CSV \
-    --model gpt-4o --max-news-per-day 5 \
+    --model gpt-4o \
     --start-date ${Y}-01-01 --end-date ${Y}-12-31 \
     > $OUT/gen_${Y}.log 2>&1
   echo "done $Y rc=$?"

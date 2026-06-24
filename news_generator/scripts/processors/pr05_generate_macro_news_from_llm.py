@@ -116,7 +116,6 @@ class MacroNewsGenerateConfig:
     start_date: Optional[str] = None
     end_date: Optional[str] = None
 
-    max_news_per_day: int = 10
     detail_min_chars: int = 45
     detail_hard_min_chars: int = 30
     detail_max_chars: int = 260
@@ -308,10 +307,6 @@ All other instructions, rules, and examples in this prompt are in English for pr
 
     def build_user_prompt(self, daily_record: Dict[str, Any]) -> str:
         date = daily_record.get("date", "")
-        news_count = min(
-            self.config.max_news_per_day,
-            int(daily_record.get("news_count_target", self.config.max_news_per_day)),
-        )
 
         events_for_prompt = self._extract_events_for_prompt(
             daily_record.get("macro_events", [])
@@ -890,11 +885,11 @@ class MacroNewsGenerator:
 
         if not news_items:
             raise ValueError("기사가 한 건도 생성되지 않았습니다.")
-        # 하루 정확히 5건(이벤트가 5건 미만인 예외적 날에는 이벤트 수만큼).
-        target_count = 5 if len(expected_ids) >= 5 else len(expected_ids)
-        if len(news_items) != target_count:
+        # 하루 무조건 5건 고정(최소=최대=5). 입력은 일별 이벤트 ≥10건을 보장하므로
+        # 항상 5건으로 병합 생성 가능. 이벤트가 5건 미만인 날은 데이터 이상으로 보고 실패 처리.
+        if len(news_items) != 5:
             raise ValueError(
-                f"기사 수는 정확히 {target_count}건이어야 합니다: 현재 {len(news_items)}건"
+                f"기사 수는 무조건 5건이어야 합니다: 현재 {len(news_items)}건"
             )
 
         # 추측·심리·수급·전망을 단정하는 표현만 금지(영향·반영·배경 등 사실 연결어는 허용).
@@ -1259,12 +1254,6 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--max-news-per-day",
-        type=int,
-        default=10,
-    )
-
-    parser.add_argument(
         "--env-path",
         type=str,
         default=None,
@@ -1287,7 +1276,6 @@ def main() -> None:
         limit_days=args.limit_days,
         start_date=args.start_date,
         end_date=args.end_date,
-        max_news_per_day=args.max_news_per_day,
         env_path=Path(args.env_path) if args.env_path else None,
     )
 
