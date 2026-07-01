@@ -47,6 +47,7 @@ crypto_universe/data/
 market_indicator/data/
 news_generator/data/
 npc_generator/data/
+stock_universe/data/
 demo/*.csv
 fnguide_list.txt
 stocklist.txt
