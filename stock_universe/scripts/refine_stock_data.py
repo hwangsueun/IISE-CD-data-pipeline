@@ -2,17 +2,17 @@
 stock_universe 주식 데이터 정제 스크립트
 ============================================
 Google Drive `raw/` 폴더의 FnGuide DataGuide 원본을 ARCHITECTURE.md(IISE-CD-StockGame
-레포, 섹션 6~7) DB 스키마에 맞춰 assets / stock_financials / stock_valuation /
-stock_price_detail CSV로 변환한다(공매도는 DDL에 없는 데이터라 stock_short_selling.csv로
-분리). bond_universe, crypto_universe와 동일한 파이프라인 컨벤션(코드는 GitHub, 데이터는
-Drive로 분리 관리)을 따른다.
+레포, 섹션 6~7) DB 스키마에 맞춰 asset_prices / assets / stock_financials /
+stock_valuation / stock_price_detail CSV로 변환한다(공매도는 DDL에 없는 데이터라
+stock_short_selling.csv로 분리). bond_universe, crypto_universe와 동일한 파이프라인
+컨벤션(코드는 GitHub, 데이터는 Drive로 분리 관리)을 따른다.
 
 ★ 2026-07-01 스키마 결정 ★ stock_price_detail은 OHLC 대신 close_price만 쓴다(팀 결정 —
 원본에 open/high/low가 없기도 하고, 캔들차트 대신 종가 라인차트만 쓰기로 함). close_price는
 공통 `asset_prices` 테이블에도 들어가는 값과 동일하다(의도된 중복 — 거래/평가는 항상
 asset_prices를 쓰고, stock_price_detail.close_price는 종목 상세화면에서 조인 한 번 덜 하려는
-편의용 사본). 이 스크립트는 stock_price_detail만 만들고, asset_prices.csv는 아직 별도로
-안 만들었다 — 다음 작업으로 남아있다.
+편의용 사본). asset_prices.csv는 stock_price_detail.close_price에서 파생하고
+change_rate(전일 대비 등락률)를 계산해서 만든다.
 
 실행 방법:
   cd stock_universe
@@ -496,6 +496,28 @@ def build_stock_short_selling(codes: set):
     return short
 
 
+def build_asset_prices(price_detail: pd.DataFrame):
+    """거래/평가 공통 asset_prices (섹션 7-6: "거래, 현재가, 총자산 평가는 asset_prices를
+    우선 사용"). stock_price_detail.close_price에서 파생하고 change_rate(전일 대비 등락률)를
+    계산해 추가한다. close_price는 asset_prices에서 NOT NULL이라 결측 행은 제외한다.
+    stock_price_detail.close_price와 값은 같지만(의도된 중복, README 참고) 이 테이블이
+    거래 엔진이 실제로 조회하는 단일 소스다."""
+    if price_detail is None:
+        print("[STEP6][경고] stock_price_detail 없음 — asset_prices.csv 생성 생략")
+        return None
+
+    ap = price_detail[["asset_id", "trade_date", "close_price"]].dropna(subset=["close_price"]).copy()
+    ap = ap.sort_values(["asset_id", "trade_date"]).drop_duplicates(["asset_id", "trade_date"])
+    ap["change_rate"] = ap.groupby("asset_id")["close_price"].pct_change().round(4)
+    ap["currency"] = "KRW"
+
+    ap.to_csv(OUT_DIR / "asset_prices.csv", index=False, encoding="utf-8-sig")
+    first_day_nulls = int(ap["change_rate"].isna().sum())
+    print(f"[STEP6] asset_prices.csv 저장 ({len(ap)}행, {ap['trade_date'].min()}~{ap['trade_date'].max()}, "
+          f"change_rate 결측 {first_day_nulls}건 — 각 종목 최초 거래일은 전일 데이터가 없어 정상)")
+    return ap
+
+
 # ----------------------------------------------------------------------------
 # 실행
 # ----------------------------------------------------------------------------
@@ -507,6 +529,8 @@ if __name__ == "__main__":
     financials = build_stock_financials(universe)
     valuation = build_stock_valuation(universe)
     price_detail = build_stock_price_detail(universe)
+    asset_prices = build_asset_prices(price_detail)
 
     print("\n완료. data/processed/ 폴더에서 assets.csv, stock_financials.csv, "
-          "stock_valuation.csv, stock_price_detail.csv, _name_code_mapping.csv 를 확인하세요.")
+          "stock_valuation.csv, stock_price_detail.csv, stock_short_selling.csv, "
+          "asset_prices.csv, _name_code_mapping.csv 를 확인하세요.")

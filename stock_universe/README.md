@@ -11,7 +11,7 @@ cd stock_universe
 mkdir -p data/raw
 # Drive `raw/` 폴더에서 아래 6개 xlsx를 data/raw/ 에 다운로드
 python scripts/refine_stock_data.py
-# 결과: data/processed/{assets,stock_financials,stock_valuation,stock_price_detail,stock_short_selling}.csv
+# 결과: data/processed/{asset_prices,assets,stock_financials,stock_valuation,stock_price_detail,stock_short_selling}.csv
 ```
 
 필요한 raw 파일은 6개다: `Fin_stock.xlsx`, `stock_financial.xlsx`, `index_total.xlsx`,
@@ -32,13 +32,18 @@ python scripts/refine_stock_data.py
 DB 담당자가 migration/seed를 작성할 때 참고할 사항 (2026-07-02 기준, `stock_price_detail`
 DDL이 OHLC 대신 `close_price`를 쓰도록 수정된 이후):
 
-- `assets`, `stock_financials`, `stock_valuation`, `stock_price_detail`은 DDL 컬럼과
-  1:1로 맞는다 (`stock_price_detail`: `asset_id, trade_date, close_price, volume,
-  foreign_qty, inst_qty, indiv_qty, shares_outstanding, market_cap`, 결측 0).
+- `assets`, `stock_financials`, `stock_valuation`, `stock_price_detail`, `asset_prices`
+  전부 DDL 컬럼과 1:1로 맞는다 (`stock_price_detail`: `asset_id, trade_date, close_price,
+  volume, foreign_qty, inst_qty, indiv_qty, shares_outstanding, market_cap`, 결측 0.
+  `asset_prices`: `asset_id, trade_date, close_price, change_rate, currency`,
+  `close_price` 결측 0, PK 중복 0).
+- `asset_prices.csv`는 `stock_price_detail.close_price`에서 파생했고 `change_rate`(전일
+  대비 등락률)를 추가로 계산했다. `change_rate` 결측 117건은 종목당 최초 거래일(전일
+  데이터 없음) 딱 1건씩이라 정상이다.
 - `stock_price_detail.close_price`는 공통 `asset_prices.close_price`와 같은 값이
   들어가는 **의도된 중복**이다. 거래 체결/총자산 평가는 항상 `asset_prices`를 쓰고,
   `stock_price_detail.close_price`는 종목 상세화면에서 조인 한 번 덜 하려는 편의용
-  사본이다. **`asset_prices.csv`는 아직 이 스크립트에서 만들지 않았다** — 별도 작업 필요.
+  사본이다.
 - `foreign_qty`/`inst_qty`/`indiv_qty`는 원본 컬럼명이 "순매수수량"이다. 매수-매도
   순증감(음수 가능)이며 "총매수수량"이 아니다. DDL 컬럼명은 그대로 써도 되지만 의미를
   혼동하지 않도록 서버 쪽에 공유가 필요하다.
