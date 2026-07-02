@@ -45,7 +45,9 @@ raw xlsx 원본은 Drive `Data/raw/bond_universe/`에서 받아 `bond_universe/d
      최종호가수익률, fetch_kr_treasury_yields.py 산출물)의 yield_pct를 trade_date로
      조인해 채운다. yield_pct(%)와 yield_rate는 같은 값이다(회사채 평균YTM과 단위 동일).
      ECOS/KRX 휴장일 차이로 빠지는 날은 직전 영업일 수익률로 forward-fill한다.
-     단, 수익률 시계열이 2014-01-02부터라 2013-12-30 하루(종목당 1건)는 NULL로 남는다.
+     kr_treasury_*.csv가 2014-01-02부터 시작해 못 덮는 2013-12-30/31 구간은
+     kr_treasury_yields_pre2014.csv(같은 ECOS 통계의 2013년 수집본인 Drive
+     데이터/processed/kr_ktb_3y·10y.csv에서 추출한 실측치)로 보강한다 → 결측 0.
   5. 통안채1년(A122260)과 RISE 중기우량회사채(A136340) 데이터도 원본에 있지만
      아키텍처 채권 4종에 없으므로 쓰지 않는다.
   6. 채권 데이터는 2013-12-30부터 시작한다(주식은 1979년부터). GAME_START_RANGE가
@@ -82,6 +84,11 @@ F_KTB_YIELD = {
     "BOND_KTB3Y": RAW_DIR / "kr_treasury_3y.csv",
     "BOND_KTB10Y": RAW_DIR / "kr_treasury_10y.csv",
 }
+# kr_treasury_*.csv가 2014-01-02부터 시작해서 못 덮는 2013-12-30/31 구간 보강용.
+# 값은 Drive 데이터/processed/kr_ktb_3y.csv, kr_ktb_10y.csv(같은 ECOS 817Y002,
+# 2013-01-02부터 수집된 버전)에서 추출한 실측치다. 같은 스키마(date,series,yield_pct).
+F_KTB_YIELD_SUPP = RAW_DIR / "kr_treasury_yields_pre2014.csv"
+KTB_SERIES_MAP = {"KTB_3Y": "BOND_KTB3Y", "KTB_10Y": "BOND_KTB10Y"}
 
 # 회사채: 시트 → asset_id
 CORP_SHEET_MAP = {
@@ -181,7 +188,8 @@ def melt_ktb_sheet(sheet_name: str) -> pd.DataFrame:
 
 def load_ktb_yields() -> pd.DataFrame | None:
     """kr_treasury_3y/10y.csv(ECOS 국고채 최종호가수익률)를 (asset_id, trade_date,
-    yield_rate)로 변환한다. yield_pct 컬럼이 곧 yield_rate(%)다."""
+    yield_rate)로 변환한다. yield_pct 컬럼이 곧 yield_rate(%)다.
+    보강 파일(kr_treasury_yields_pre2014.csv)이 있으면 2014년 이전 구간도 채운다."""
     frames = []
     for asset_id, path in F_KTB_YIELD.items():
         if not path.exists():
@@ -193,8 +201,20 @@ def load_ktb_yields() -> pd.DataFrame | None:
             "trade_date": pd.to_datetime(df["date"]).dt.date,
             "yield_rate": pd.to_numeric(df["yield_pct"], errors="coerce"),
         }))
+
+    if F_KTB_YIELD_SUPP.exists():
+        supp = pd.read_csv(F_KTB_YIELD_SUPP)
+        supp = supp[supp["series"].isin(KTB_SERIES_MAP)]
+        frames.append(pd.DataFrame({
+            "asset_id": supp["series"].map(KTB_SERIES_MAP),
+            "trade_date": pd.to_datetime(supp["date"]).dt.date,
+            "yield_rate": pd.to_numeric(supp["yield_pct"], errors="coerce"),
+        }))
+        print(f"[STEP2] 2014년 이전 수익률 보강 파일 적용 ({F_KTB_YIELD_SUPP.name}, {len(supp)}행)")
+
     out = pd.concat(frames, ignore_index=True)
-    return out.drop_duplicates(["asset_id", "trade_date"])
+    # 본 파일 우선, 보강 파일은 본 파일에 없는 날짜만 채운다
+    return out.drop_duplicates(["asset_id", "trade_date"], keep="first")
 
 
 def build_ktb_bonds() -> pd.DataFrame:
@@ -212,8 +232,8 @@ def build_ktb_bonds() -> pd.DataFrame:
         # KRX 거래일인데 ECOS에 없는 날(휴장일 기준 차이)은 직전 영업일 수익률로 채운다
         out["yield_rate"] = out.groupby("asset_id")["yield_rate"].ffill()
         missing = int(out["yield_rate"].isna().sum())
-        print(f"[STEP2] 국고채 yield_rate 조인 완료 (ECOS 817Y002 최종호가수익률, "
-              f"잔여 결측 {missing}건 — 수익률 시계열 시작(2014-01-02) 이전 날짜만 남는 게 정상)")
+        print(f"[STEP2] 국고채 yield_rate 조인 완료 (ECOS 817Y002 최종호가수익률, 잔여 결측 {missing}건"
+              + (" — 보강 파일까지 적용 후에도 남으면 원본 커버리지를 확인할 것" if missing else ")"))
     else:
         out["yield_rate"] = float("nan")
     return out

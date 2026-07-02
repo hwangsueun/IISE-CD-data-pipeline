@@ -14,6 +14,7 @@ mkdir -p data/raw
 #   채권최종.xlsx           → bond_final.xlsx 로 저장 (한글 파일명 인코딩 문제 회피)
 #   kr_treasury_3y.csv     → 그대로 저장 (국고채 3년 수익률, fetch_kr_treasury_yields.py 산출물)
 #   kr_treasury_10y.csv    → 그대로 저장 (국고채 10년 수익률; Drive `데이터/raw/`에 있음)
+#   kr_treasury_yields_pre2014.csv → 그대로 저장 (2013-12-30/31 수익률 보강, 4행)
 python scripts/refine_bond_data.py
 # 결과: data/processed/{bond_price_detail,asset_prices}.csv
 ```
@@ -46,8 +47,10 @@ python scripts/refine_bond_data.py
 - 국고채 `yield_rate`는 kr_treasury_3y/10y.csv(ECOS 817Y002 최종호가수익률)의
   `yield_pct`를 trade_date로 조인해 채웠다 — `yield_pct`(%)와 `yield_rate`는 같은
   값이며 market_indicator의 `ktb_3y_rate`와도 동일한 ECOS 통계다. 휴장일 차이는
-  직전 영업일 값으로 forward-fill. 수익률 시계열이 2014-01-02부터라 2013-12-30
-  하루만 종목당 1건씩 NULL로 남는다.
+  직전 영업일 값으로 forward-fill. kr_treasury_*.csv가 못 덮는 2013-12-30/31은
+  `kr_treasury_yields_pre2014.csv`(같은 ECOS 통계의 2013년 수집본인 Drive
+  데이터/processed/kr_ktb_3y·10y.csv에서 추출한 실측치, 이 폴더에 포함)로 보강해
+  **네 종목 모두 yield_rate 결측 0**이다.
 - **채권 데이터는 2013-12-30 시작**(주식은 1979년부터). `GAME_START_RANGE`가
   2013-01-01부터면 2013년 시작 세션에 채권 가격 없는 구간이 생긴다 — `turnSelector`
   시작일 하한을 2014-01-01로 두거나 해당 구간 채권 거래를 막아야 한다.
