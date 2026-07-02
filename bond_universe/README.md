@@ -9,9 +9,11 @@ Google Drive에서 관리한다(`data/`는 `.gitignore` 대상).
 ```bash
 cd bond_universe
 mkdir -p data/raw
-# Drive `Data/raw/bond_universe/`에서 아래 2개 xlsx를 data/raw/ 에 다운로드
-#   corporate_bonds.xlsx  → 그대로 저장
-#   채권최종.xlsx          → bond_final.xlsx 로 저장 (한글 파일명 인코딩 문제 회피)
+# Drive `Data/raw/bond_universe/`에서 아래 파일들을 data/raw/ 에 다운로드
+#   corporate_bonds.xlsx   → 그대로 저장
+#   채권최종.xlsx           → bond_final.xlsx 로 저장 (한글 파일명 인코딩 문제 회피)
+#   kr_treasury_3y.csv     → 그대로 저장 (국고채 3년 수익률, fetch_kr_treasury_yields.py 산출물)
+#   kr_treasury_10y.csv    → 그대로 저장 (국고채 10년 수익률; Drive `데이터/raw/`에 있음)
 python scripts/refine_bond_data.py
 # 결과: data/processed/{bond_price_detail,asset_prices}.csv
 ```
@@ -22,8 +24,8 @@ python scripts/refine_bond_data.py
 |---|---|---|---|
 | `BOND_CORPAAA` | corporate_bonds.xlsx AAA1/AAA2 (KIS 회사채AAA 지수) | 총수익지수 | 평균YTM |
 | `BOND_CORPBBB` | corporate_bonds.xlsx BBB1/BBB2 (KIS 회사채BBB 지수) | 총수익지수 | 평균YTM |
-| `BOND_KTB3Y` | 채권최종.xlsx 채권tot1/tot2의 A114260 (KODEX 국고채3년 ETF) | 수정시가(원) | NULL |
-| `BOND_KTB10Y` | 같은 시트의 A148070 (KIWOOM 국고채10년 ETF) | 수정시가(원) | NULL |
+| `BOND_KTB3Y` | 채권최종.xlsx 채권tot1/tot2의 A114260 (KODEX 국고채3년 ETF) | 수정시가(원) | kr_treasury_3y.csv의 yield_pct |
+| `BOND_KTB10Y` | 같은 시트의 A148070 (KIWOOM 국고채10년 ETF) | 수정시가(원) | kr_treasury_10y.csv의 yield_pct |
 
 ## 산출물 → Drive 업로드 위치
 
@@ -41,8 +43,11 @@ python scripts/refine_bond_data.py
   쓴다. ETF 가격이 곧 시장이 계산한 가격지수(쿠폰 재투자 반영)라 자체 변환 모델보다
   정확하다. 단, 원본 아이템이 수정'시가'라 close_price에 들어가는 값이 실제로는
   당일 시가다(일간 채권 ETF에서 시가/종가 차이는 미미).
-- 국고채 `yield_rate`는 원본에 없어 NULL — 필요 시 market_indicator의 국고채
-  금리(`ktb_yield`)와 날짜 조인으로 보강 가능.
+- 국고채 `yield_rate`는 kr_treasury_3y/10y.csv(ECOS 817Y002 최종호가수익률)의
+  `yield_pct`를 trade_date로 조인해 채웠다 — `yield_pct`(%)와 `yield_rate`는 같은
+  값이며 market_indicator의 `ktb_3y_rate`와도 동일한 ECOS 통계다. 휴장일 차이는
+  직전 영업일 값으로 forward-fill. 수익률 시계열이 2014-01-02부터라 2013-12-30
+  하루만 종목당 1건씩 NULL로 남는다.
 - **채권 데이터는 2013-12-30 시작**(주식은 1979년부터). `GAME_START_RANGE`가
   2013-01-01부터면 2013년 시작 세션에 채권 가격 없는 구간이 생긴다 — `turnSelector`
   시작일 하한을 2014-01-01로 두거나 해당 구간 채권 거래를 막아야 한다.

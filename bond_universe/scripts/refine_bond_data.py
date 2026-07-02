@@ -41,9 +41,11 @@ raw xlsx 원본은 Drive `Data/raw/bond_universe/`에서 받아 `bond_universe/d
   3. 원본 아이템이 수정'시가'(원)라 종가가 아니라 시가 기준이다. 일간 봉에서 채권
      ETF의 시가/종가 차이는 미미해 게임용으로는 무방하나, close_price 컬럼에
      들어가는 값이 실제로는 당일 시가라는 점은 알고 있어야 한다.
-  4. 국고채(KTB3Y/KTB10Y)의 yield_rate는 이 원본에 없어 NULL이다. 필요하면
-     market_indicator의 국고채 금리(ktb_yield, get_kr_bond_rates.py)와 날짜 조인으로
-     보강할 수 있다. 회사채(CORPAAA/CORPBBB)는 평균YTM이 있어 채워진다.
+  4. 국고채(KTB3Y/KTB10Y)의 yield_rate는 kr_treasury_3y/10y.csv(ECOS 817Y002
+     최종호가수익률, fetch_kr_treasury_yields.py 산출물)의 yield_pct를 trade_date로
+     조인해 채운다. yield_pct(%)와 yield_rate는 같은 값이다(회사채 평균YTM과 단위 동일).
+     ECOS/KRX 휴장일 차이로 빠지는 날은 직전 영업일 수익률로 forward-fill한다.
+     단, 수익률 시계열이 2014-01-02부터라 2013-12-30 하루(종목당 1건)는 NULL로 남는다.
   5. 통안채1년(A122260)과 RISE 중기우량회사채(A136340) 데이터도 원본에 있지만
      아키텍처 채권 4종에 없으므로 쓰지 않는다.
   6. 채권 데이터는 2013-12-30부터 시작한다(주식은 1979년부터). GAME_START_RANGE가
@@ -73,6 +75,13 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 F_CORP = RAW_DIR / "corporate_bonds.xlsx"   # KIS 회사채 AAA/BBB 지수
 F_KTB = RAW_DIR / "bond_final.xlsx"          # 원본명 채권최종.xlsx — 국고채 ETF 시세
+
+# 국고채 수익률 (fetch_kr_treasury_yields.py 산출물, ECOS 817Y002 최종호가수익률)
+# 컬럼: date, series, yield_pct — yield_pct(%)가 곧 bond_price_detail.yield_rate다.
+F_KTB_YIELD = {
+    "BOND_KTB3Y": RAW_DIR / "kr_treasury_3y.csv",
+    "BOND_KTB10Y": RAW_DIR / "kr_treasury_10y.csv",
+}
 
 # 회사채: 시트 → asset_id
 CORP_SHEET_MAP = {
@@ -170,6 +179,24 @@ def melt_ktb_sheet(sheet_name: str) -> pd.DataFrame:
     return out
 
 
+def load_ktb_yields() -> pd.DataFrame | None:
+    """kr_treasury_3y/10y.csv(ECOS 국고채 최종호가수익률)를 (asset_id, trade_date,
+    yield_rate)로 변환한다. yield_pct 컬럼이 곧 yield_rate(%)다."""
+    frames = []
+    for asset_id, path in F_KTB_YIELD.items():
+        if not path.exists():
+            print(f"[STEP2][경고] {path.name} 없음 — 국고채 yield_rate는 NULL로 남습니다.")
+            return None
+        df = pd.read_csv(path)
+        frames.append(pd.DataFrame({
+            "asset_id": asset_id,
+            "trade_date": pd.to_datetime(df["date"]).dt.date,
+            "yield_rate": pd.to_numeric(df["yield_pct"], errors="coerce"),
+        }))
+    out = pd.concat(frames, ignore_index=True)
+    return out.drop_duplicates(["asset_id", "trade_date"])
+
+
 def build_ktb_bonds() -> pd.DataFrame:
     frames = []
     for sheet in KTB_SHEETS:
@@ -177,8 +204,19 @@ def build_ktb_bonds() -> pd.DataFrame:
         frames.append(df)
         print(f"[STEP2] {F_KTB.name}[{sheet}] 처리 ({len(df)}행)")
     out = pd.concat(frames, ignore_index=True)
-    out["yield_rate"] = float("nan")  # 원본에 국고채 YTM 없음 — 주의사항 4 참고
-    return out.sort_values(["asset_id", "trade_date"]).drop_duplicates(["asset_id", "trade_date"])
+    out = out.sort_values(["asset_id", "trade_date"]).drop_duplicates(["asset_id", "trade_date"])
+
+    yields = load_ktb_yields()
+    if yields is not None:
+        out = out.merge(yields, on=["asset_id", "trade_date"], how="left")
+        # KRX 거래일인데 ECOS에 없는 날(휴장일 기준 차이)은 직전 영업일 수익률로 채운다
+        out["yield_rate"] = out.groupby("asset_id")["yield_rate"].ffill()
+        missing = int(out["yield_rate"].isna().sum())
+        print(f"[STEP2] 국고채 yield_rate 조인 완료 (ECOS 817Y002 최종호가수익률, "
+              f"잔여 결측 {missing}건 — 수익률 시계열 시작(2014-01-02) 이전 날짜만 남는 게 정상)")
+    else:
+        out["yield_rate"] = float("nan")
+    return out
 
 
 # ----------------------------------------------------------------------------
